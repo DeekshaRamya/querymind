@@ -24,11 +24,11 @@ export async function GET(request: Request) {
       
     // Select all user credentials (excluding hashed passwords)
     const resultCredentials = await pool.request()
-      .query("SELECT uc_id, id as user_id, db_username FROM user_credential ORDER BY uc_id ASC");
+      .query("SELECT uc_id, id as user_id, db_username, db_type, server, port, db_name FROM user_credential ORDER BY uc_id ASC");
       
     // Select all database schemas
     const resultSchemas = await pool.request()
-      .query("SELECT schema_id, database_name FROM database_schema ORDER BY schema_id ASC");
+      .query("SELECT schema_id, database_name, database_type FROM database_schema ORDER BY schema_id ASC");
 
     return NextResponse.json({ 
       success: true, 

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import sql from 'mssql';
 import { Pool as PgPool } from 'pg';
-import { GoogleGenAI } from '@google/genai';
+import { AzureOpenAI } from 'openai';
+import { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';
 import { decrypt } from '@/lib/crypto';
 import jwt from 'jsonwebtoken';
 import { getConnection } from '@/lib/db';
@@ -258,45 +259,55 @@ ${schemaContext}
 User Query: ${query}
 `;
 
-    // Initialize Gemini API
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    // Initialize Azure OpenAI
+    const credential = new DefaultAzureCredential();
+    const tokenProvider = getBearerTokenProvider(
+      credential,
+      "https://cognitiveservices.azure.com/.default"
+    );
 
-    let response;
+    const client = new AzureOpenAI({
+      endpoint: process.env.AZURE_OPENAI_ENDPOINT || "https://systechinternalapp.cognitiveservices.azure.com/",
+      azureADTokenProvider: tokenProvider,
+      apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview"
+    });
+
+    let chatCompletion;
     let retries = 3;
+    const deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME || "gpt-5.4";
+
     while (retries > 0) {
       try {
-        response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: fullPrompt,
-            config: {
-                systemInstruction: systemInstruction,
-                temperature: 0.1,
-                responseMimeType: "application/json",
-            }
+        chatCompletion = await client.chat.completions.create({
+          model: deploymentName,
+          messages: [
+            { role: "system", content: systemInstruction },
+            { role: "user", content: fullPrompt }
+          ],
+          temperature: 0.1,
+          response_format: { type: "json_object" }
         });
         break; // Break out of loop on success
       } catch (e1: any) {
-        console.error(`Google API Raw Error:`, e1);
+        console.error(`Azure OpenAI API Raw Error:`, e1);
         
-        // Handle 503 Overloaded
-        if (e1.message && e1.message.includes('503')) {
+        // Handle rate limits or temporary overloads
+        if (e1.status === 429 || (e1.message && e1.message.includes('503'))) {
           retries--;
           if (retries === 0) {
-             throw new Error(`Google AI API is overloaded. Please try again in a few moments.`);
+             throw new Error(`Azure OpenAI API is currently overloaded or rate limited. Please try again in a few moments.`);
           }
           await new Promise(res => setTimeout(res, 2000));
-        } 
-        // Other errors (including 429)
-        else {
-          throw new Error(`Google API Error: ${e1.message}`);
+        } else {
+          throw new Error(`Azure OpenAI API Error: ${e1.message}`);
         }
       }
     }
 
-    const aiText = response.text;
+    const aiText = chatCompletion?.choices[0]?.message?.content;
 
     if (!aiText) {
-      throw new Error("Failed to generate response from Gemini");
+      throw new Error("Failed to generate response from Azure OpenAI");
     }
 
     let parsed;

@@ -15,11 +15,16 @@ interface UserCredential {
   uc_id: number;
   user_id: number;
   db_username: string;
+  db_type: string;
+  server: string;
+  port: number;
+  db_name: string;
 }
 
 interface DatabaseSchema {
   schema_id: number;
   database_name: string;
+  database_type: string;
 }
 
 export default function AdminPage() {
@@ -187,17 +192,32 @@ export default function AdminPage() {
                     <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
                       <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">Config ID</th>
                       <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">User ID</th>
+                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">DB Type</th>
+                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">Server</th>
+                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">Port</th>
+                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">DB Name</th>
                       <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">DB Username</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E5E7EB]">
                     {credentials.length === 0 ? (
-                      <tr><td colSpan={3} className="py-8 text-center text-[#6B7280]">No user configurations found.</td></tr>
+                      <tr><td colSpan={7} className="py-8 text-center text-[#6B7280]">No user configurations found.</td></tr>
                     ) : (
                       credentials.map((config) => (
                         <tr key={config.uc_id} className="hover:bg-[#FAFAFA] transition-colors">
                           <td className="py-4 px-6 text-[14px] text-[#6B7280]">#{config.uc_id}</td>
                           <td className="py-4 px-6 text-[14px] font-medium text-[#111827]">#{config.user_id}</td>
+                          <td className="py-4 px-6 text-[14px] text-[#4B5563]">
+                            <span className={`px-2.5 py-1 text-[12px] font-medium rounded-full uppercase ${config.db_type === 'postgres'
+                                ? 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
+                                : 'bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A]'
+                              }`}>
+                              {config.db_type}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-[14px] text-[#4B5563]">{config.server}</td>
+                          <td className="py-4 px-6 text-[14px] text-[#4B5563]">{config.port}</td>
+                          <td className="py-4 px-6 text-[14px] font-medium text-[#111827]">{config.db_name}</td>
                           <td className="py-4 px-6 text-[14px] text-[#4B5563]">{config.db_username}</td>
                         </tr>
                       ))
@@ -212,7 +232,7 @@ export default function AdminPage() {
                     <tr className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
                       <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">Schema ID</th>
                       <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider">Database Name</th>
-                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider text-right">Status</th>
+                      <th className="py-4 px-6 text-[13px] font-semibold text-[#4B5563] uppercase tracking-wider text-right">Database Type</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E5E7EB]">
@@ -224,8 +244,11 @@ export default function AdminPage() {
                           <td className="py-4 px-6 text-[14px] text-[#6B7280]">#{schema.schema_id}</td>
                           <td className="py-4 px-6 text-[14px] font-medium text-[#111827]">{schema.database_name}</td>
                           <td className="py-4 px-6 text-right">
-                            <span className="px-2.5 py-1 text-[12px] font-medium rounded-full bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]">
-                              Active
+                            <span className={`px-2.5 py-1 text-[12px] font-medium rounded-full uppercase ${schema.database_type === 'postgres'
+                                ? 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
+                                : 'bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A]'
+                              }`}>
+                              {schema.database_type || 'mssql'}
                             </span>
                           </td>
                         </tr>
