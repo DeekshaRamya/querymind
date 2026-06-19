@@ -48,26 +48,26 @@ export async function GET(req: Request) {
 
   try {
     const response = await cca.acquireTokenByCode(tokenRequest);
-    
+
     const account = response.account;
     let email = '';
     let name = '';
 
     if (account) {
-      email = (account.username || account.idTokenClaims?.email || account.idTokenClaims?.preferred_username || '').toLowerCase().trim();
+      email = (account.username || account.idTokenClaims?.email || account.idTokenClaims?.preferred_username || 'unk').toLowerCase().trim();
       name = account.name || (account.idTokenClaims?.name as string) || 'Microsoft User';
     }
     if (!email && response.accessToken) {
-       const profileResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
-         headers: { 'Authorization': `Bearer ${response.accessToken}` }
-       });
-       if (profileResponse.ok) {
-         const profileData = await profileResponse.json();
-         email = (profileData.mail || profileData.userPrincipalName || '').toLowerCase().trim();
-         if (!name || name === 'Microsoft User') {
-            name = profileData.displayName || 'Microsoft User';
-         }
-       }
+      const profileResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+        headers: { 'Authorization': `Bearer ${response.accessToken}` }
+      });
+      if (profileResponse.ok) {
+        const profileData = await profileResponse.json();
+        email = (profileData.mail || profileData.userPrincipalName || '').toLowerCase().trim();
+        if (!name || name === 'Microsoft User') {
+          name = profileData.displayName || 'Microsoft User';
+        }
+      }
     }
 
     if (!email) {
