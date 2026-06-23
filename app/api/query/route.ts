@@ -33,18 +33,67 @@ export async function POST(req: Request) {
     const userId = decoded.userId;
     const pool = await getConnection();
 
-    // Fetch the user's configured database
-    let userDbRes = await pool.request()
-      .input('userId', userId)
-      .query('SELECT TOP 1 db_username, db_password, db_type, server, port, db_name FROM user_credential WHERE id = @userId');
-
-    if (userDbRes.recordset.length === 0) {
-      return NextResponse.json({ error: `Please configure your database credentials before querying.` }, { status: 400 });
+    // Validate that a database name was provided
+    if (!requestedDbName) {
+      return NextResponse.json({ error: 'Database name is required.' }, { status: 400 });
     }
 
-    const connDetails = userDbRes.recordset[0];
-    const db_name = requestedDbName || connDetails.db_name || process.env.DB_NAME || '';
-    const db_type = connDetails.db_type || 'mssql'; 
+    // Fetch the user's exact configured database details (no reliance on TOP 1)
+    let userDbRes = await pool.request()
+      .input('userId', userId)
+      .input('dbName', requestedDbName)
+      .query('SELECT db_username, db_password, db_type, server, port, db_name FROM user_credential WHERE id = @userId AND db_name = @dbName');
+
+    let connDetails: any = userDbRes.recordset[0];
+    let decryptedPassword = '';
+
+    // Fall back to environment configuration only if requesting the default system database
+    if (!connDetails) {
+      if (requestedDbName === process.env.DB_NAME) {
+        connDetails = {
+          db_username: process.env.DB_USER || '',
+          db_type: 'mssql',
+          server: process.env.DB_SERVER || '',
+          port: parseInt(process.env.DB_PORT || '1433', 10),
+          db_name: process.env.DB_NAME || ''
+        };
+        decryptedPassword = process.env.DB_PASSWORD || '';
+      } else {
+        return NextResponse.json({ error: `No database credentials configured for '${requestedDbName}'.` }, { status: 400 });
+      }
+    } else {
+      // Decrypt database password
+      try {
+        decryptedPassword = decrypt(connDetails.db_password);
+      } catch (e: any) {
+        console.error("Failed to decrypt database password:", e);
+        return NextResponse.json({ error: `Failed to decrypt password for database configuration. Details: ${e.message}` }, { status: 500 });
+      }
+    }
+
+    const db_type = (connDetails.db_type || 'mssql').toLowerCase();
+    if (db_type !== 'mssql' && db_type !== 'postgres') {
+      return NextResponse.json({ error: `Unsupported database type: ${db_type}. Supported types are MSSQL and PostgreSQL.` }, { status: 400 });
+    }
+
+    const db_name = connDetails.db_name;
+
+    // Logging connection details (excluding password)
+    console.log({
+      dbType: db_type,
+      dbName: db_name,
+      username: connDetails.db_username,
+      server: connDetails.server
+    });
+
+    const targetConfig = {
+      user: connDetails.db_username,
+      password: decryptedPassword,
+      server: connDetails.server,
+      database: db_name,
+      port: typeof connDetails.port === 'string' ? parseInt(connDetails.port, 10) : connDetails.port,
+      options: { encrypt: true, trustServerCertificate: true }
+    };
 
     // Dynamically adjust system instruction based on db_type
     // const dbDialect = 'SQL Server';
@@ -164,23 +213,8 @@ Important:
       try {
         let schemaResultData: any[] = [];
         
-        // Determine connection details based on whether this is the user's private db or a global db
-        const isPrivateDb = connDetails && db_name === connDetails.db_name;
-        const targetServer = isPrivateDb ? connDetails.server : process.env.DB_SERVER;
-        const targetPort = isPrivateDb ? connDetails.port : parseInt(process.env.DB_PORT || '1433', 10);
-        const targetUser = isPrivateDb ? connDetails.db_username : process.env.DB_USER;
-        const targetPassword = isPrivateDb ? decrypt(connDetails.db_password) : process.env.DB_PASSWORD;
-        const targetType = isPrivateDb ? connDetails.db_type : 'mssql'; // env defaults to mssql
-        
-        if (targetType === 'mssql') {
-          const tempPool = await new sql.ConnectionPool({
-            user: targetUser,
-            password: targetPassword as string,
-            server: targetServer as string,
-            database: db_name,
-            port: targetPort,
-            options: { encrypt: true, trustServerCertificate: true }
-          }).connect();
+        if (db_type === 'mssql') {
+          const tempPool = await new sql.ConnectionPool(targetConfig).connect();
           
           const schemaQuery = `
             SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
@@ -190,16 +224,31 @@ Important:
           const result = await tempPool.request().query(schemaQuery);
           schemaResultData = result.recordset;
           await tempPool.close();
-        } else if (targetType === 'postgres') {
-          const pgPool = new PgPool({
-            user: targetUser,
-            password: targetPassword as string,
-            host: targetServer as string,
-            database: db_name,
-            port: targetPort,
-            ssl: { rejectUnauthorized: false }
-          });
-          const client = await pgPool.connect();
+        } else if (db_type === 'postgres') {
+          let pgPool;
+          let client;
+          const pgConfig = {
+            user: targetConfig.user,
+            password: targetConfig.password,
+            host: targetConfig.server,
+            database: targetConfig.database,
+            port: targetConfig.port
+          };
+
+          try {
+            // First try with SSL
+            pgPool = new PgPool({ ...pgConfig, ssl: { rejectUnauthorized: false } });
+            client = await pgPool.connect();
+          } catch (err: any) {
+            if (err.message && (err.message.includes('does not support SSL') || err.message.includes('SSL connection'))) {
+              console.log("PostgreSQL server does not support SSL. Retrying connection without SSL...");
+              pgPool = new PgPool({ ...pgConfig, ssl: false });
+              client = await pgPool.connect();
+            } else {
+              throw err;
+            }
+          }
+
           const schemaQuery = `
             SELECT table_schema, table_name, column_name, data_type
             FROM information_schema.columns
@@ -335,36 +384,37 @@ User Query: ${query}
 
     let data: any[] = [];
     try {
-        // Determine connection details based on whether this is the user's private db or a global db
-        const isPrivateDb = connDetails && db_name === connDetails.db_name;
-        const targetServer = isPrivateDb ? connDetails.server : process.env.DB_SERVER;
-        const targetPort = isPrivateDb ? connDetails.port : parseInt(process.env.DB_PORT || '1433', 10);
-        const targetUser = isPrivateDb ? connDetails.db_username : process.env.DB_USER;
-        const targetPassword = isPrivateDb ? decrypt(connDetails.db_password) : process.env.DB_PASSWORD;
-        const targetType = isPrivateDb ? connDetails.db_type : 'mssql'; // env defaults to mssql
-
-        if (targetType === 'mssql') {
-          const execPool = await new sql.ConnectionPool({
-            user: targetUser,
-            password: targetPassword as string,
-            server: targetServer as string,
-            database: db_name,
-            port: targetPort,
-            options: { encrypt: true, trustServerCertificate: true }
-          }).connect();
+        if (db_type === 'mssql') {
+          const execPool = await new sql.ConnectionPool(targetConfig).connect();
           
           let execResult = await execPool.request().query(sqlQuery);
           data = execResult.recordset;
           await execPool.close();
-        } else if (targetType === 'postgres') {
-          const pgPool = new PgPool({
-            user: targetUser,
-            password: targetPassword as string,
-            host: targetServer as string,
-            database: db_name,
-            port: targetPort
-          });
-          const client = await pgPool.connect();
+        } else if (db_type === 'postgres') {
+          let pgPool;
+          let client;
+          const pgConfig = {
+            user: targetConfig.user,
+            password: targetConfig.password,
+            host: targetConfig.server,
+            database: targetConfig.database,
+            port: targetConfig.port
+          };
+
+          try {
+            // First try with SSL
+            pgPool = new PgPool({ ...pgConfig, ssl: { rejectUnauthorized: false } });
+            client = await pgPool.connect();
+          } catch (err: any) {
+            if (err.message && (err.message.includes('does not support SSL') || err.message.includes('SSL connection'))) {
+              console.log("PostgreSQL server does not support SSL. Retrying connection without SSL...");
+              pgPool = new PgPool({ ...pgConfig, ssl: false });
+              client = await pgPool.connect();
+            } else {
+              throw err;
+            }
+          }
+
           const result = await client.query(sqlQuery);
           data = result.rows || [];
           client.release();
